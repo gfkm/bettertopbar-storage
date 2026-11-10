@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BTB1:{"id":"boot","ok":false}</title>
+<meta name="robots" content="noindex">
+</head>
+<body>
+<!--
+BetterTopBar settings storage page.
+
+The Deadlock mod BetterTopBar loads this page in a hidden CitadelHTMLPanel, the game's
+embedded Chromium. Panorama has no storage API, but this page's localStorage
+survives a game restart. Requests arrive as the URL fragment, because SetURL
+accepts only https:// URLs. Answers go back through document.title, which
+Panorama receives as the HTMLTitle event.
+
+Request:  #btb1.<id>.<op>[.<base64url payload>]   op = get | set | del
+Answer:   title "BTB1:" + JSON {id, ok, op, value?, err?}
+
+The page touches exactly one localStorage key and never puts request data
+into the DOM. Source: the BetterTopBar repository, web/bettertopbar-storage/ (same page as OPT's opt-storage and BetterMap's bettermap-storage, own protocol and key).
+-->
+<script>
+(function () {
+    "use strict";
+    var PROTOCOL = "btb1";
+    var TITLE_PREFIX = "BTB1:";
+    var STORAGE_KEY = "bettertopbar.settings.v1";
+    var MAX_VALUE_CHARS = 16384;   // a full record is well under 1 KB; refuse anything absurd
+
+    function answer(obj) { document.title = TITLE_PREFIX + JSON.stringify(obj); }
+
+    function fromBase64Url(s) {
+        var b64 = s.replace(/-/g, "+").replace(/_/g, "/");
+        while (b64.length % 4) { b64 += "="; }
+        var bin = atob(b64);
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
+        return new TextDecoder("utf-8").decode(bytes);
+    }
+
+    function handle(fragment) {
+        var parts = fragment.replace(/^#/, "").split(".");
+        if (parts.length < 3 || parts[0] !== PROTOCOL) { return; }
+        var id = parts[1];
+        var op = parts[2];
+        if (!/^[A-Za-z0-9_-]{1,32}$/.test(id)) { return; }
+        try {
+            if (op === "get") {
+                answer({ id: id, ok: true, op: op, value: localStorage.getItem(STORAGE_KEY) });
+            } else if (op === "set") {
+                var value = fromBase64Url(parts[3] || "");
+                if (value.length > MAX_VALUE_CHARS) { throw new Error("value too long"); }
+                localStorage.setItem(STORAGE_KEY, value);
+                answer({ id: id, ok: localStorage.getItem(STORAGE_KEY) === value, op: op });
+            } else if (op === "del") {
+                localStorage.removeItem(STORAGE_KEY);
+                answer({ id: id, ok: true, op: op });
+            } else {
+                answer({ id: id, ok: false, op: op, err: "unknown op" });
+            }
+        } catch (e) {
+            answer({ id: id, ok: false, op: op, err: String(e && e.message || e) });
+        }
+    }
+
+    window.addEventListener("hashchange", function () { handle(location.hash); });
+
+    var storageOk = false;
+    try {
+        localStorage.setItem(STORAGE_KEY + ".probe", "1");
+        localStorage.removeItem(STORAGE_KEY + ".probe");
+        storageOk = true;
+    } catch (e) {}
+    answer({ id: "ready", ok: storageOk, v: 1 });
+    // A fragment already present on load is a request too (the settings kit sends every request this way).
+    if (location.hash) { handle(location.hash); }
+})();
+</script>
+</body>
+</html>
